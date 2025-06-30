@@ -7,17 +7,20 @@ final class ReviewsViewModel: NSObject {
     var onStateChange: ((State) -> Void)?
 
     private var state: State
+    private var itemsCount: Int
     private let reviewsProvider: ReviewsProvider
     private let ratingRenderer: RatingRenderer
     private let decoder: JSONDecoder
 
     init(
         state: State = State(),
+        itemsCount: Int = 0,
         reviewsProvider: ReviewsProvider = ReviewsProvider(),
         ratingRenderer: RatingRenderer = RatingRenderer(),
         decoder: JSONDecoder = JSONDecoder()
     ) {
         self.state = state
+        self.itemsCount = itemsCount
         self.reviewsProvider = reviewsProvider
         self.ratingRenderer = ratingRenderer
         self.decoder = decoder
@@ -50,6 +53,7 @@ private extension ReviewsViewModel {
             let data = try result.get()
             let reviews = try decoder.decode(Reviews.self, from: data)
             state.items += reviews.items.map(makeReviewItem)
+            itemsCount = reviews.count
             state.offset += state.limit
             state.shouldLoad = state.offset < reviews.count
         } catch {
@@ -81,10 +85,16 @@ private extension ReviewsViewModel {
     func makeReviewItem(_ review: Review) -> ReviewItem {
         let reviewText = review.text.attributed(font: .text)
         let created = review.created.attributed(font: .created, color: .created)
+        let nameSurname = review.nameSurname.attributed(font: .username)
+        let rating = review.rating
+        let avatar = UIImage(named: "Avatar") ?? UIImage()
         let item = ReviewItem(
             reviewText: reviewText,
             created: created,
-            onTapShowMore: showMoreReview
+            onTapShowMore: showMoreReview,
+            nameSurname: nameSurname,
+            rating: ratingRenderer.ratingImage(rating),
+            avatar: avatar
         )
         return item
     }
@@ -96,14 +106,21 @@ private extension ReviewsViewModel {
 extension ReviewsViewModel: UITableViewDataSource {
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        state.items.count
+        state.items.count + 1
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let config = state.items[indexPath.row]
-        let cell = tableView.dequeueReusableCell(withIdentifier: config.reuseId, for: indexPath)
-        config.update(cell: cell)
-        return cell
+        if (indexPath.row == state.items.count) {
+            let cell = tableView.dequeueReusableCell(withIdentifier: "itemsCountIdentifier", for: indexPath) as! ItemsCountCell
+            let config = ItemsCountCellConfig(itemsCount: "\(itemsCount) отзывов")
+            config.update(cell: cell)
+            return cell
+        } else {
+            let config = state.items[indexPath.row]
+            let cell = tableView.dequeueReusableCell(withIdentifier: config.reuseId, for: indexPath)
+            config.update(cell: cell)
+            return cell
+        }
     }
 
 }
@@ -113,7 +130,11 @@ extension ReviewsViewModel: UITableViewDataSource {
 extension ReviewsViewModel: UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        state.items[indexPath.row].height(with: tableView.bounds.size)
+        if (indexPath.row == state.items.count) {
+            40
+        } else {
+            state.items[indexPath.row].height(with: tableView.bounds.size)
+        }
     }
 
     /// Метод дозапрашивает отзывы, если до конца списка отзывов осталось два с половиной экрана по высоте.
@@ -123,7 +144,13 @@ extension ReviewsViewModel: UITableViewDelegate {
         targetContentOffset: UnsafeMutablePointer<CGPoint>
     ) {
         if shouldLoadNextPage(scrollView: scrollView, targetOffsetY: targetContentOffset.pointee.y) {
-            getReviews()
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    self.getReviews()
+                    
+                }
+            }
         }
     }
 
